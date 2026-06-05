@@ -19,15 +19,18 @@ try:
     df_name_dictionary = pd.read_csv(DC_NAMES_PATH, sep='\t',low_memory=False, encoding='utf-16')
 
     print("Success: All core database files loaded perfectly!")
-    print(f"Total players in database: {len(df_players):,}")
-    print(f"Total edited names in database: {len(df_edited_names):,}")
-    print(f"Total teams in database: {len(df_teams):,}")
-    print(f"Total names in master dictionary: {len(df_name_dictionary):,}")
+    
+    print("Filtering database down to draft pool ....")
+    draft_teams = [269, 270, 271, 272, 819, 820, 822, 1443, 1447, 1516, 1786, 1788]
 
-    print("\n--- Name Dictionary Columns ---")
-    print(df_name_dictionary.columns.tolist())
-    print("\n--- First 5 rows of Name Dictionary ---")
-    print(df_name_dictionary.head(5))
+    #Find all player IDs for those teams
+    target_player_links = df_links[df_links['teamid'].isin(draft_teams)]
+    target_player_ids = target_player_links['playerid']
+
+    df_draft_pool = df_players[df_players['playerid'].isin(target_player_ids)].copy()
+
+    print("Success: Draft pool selected successfully!")
+    print(f"Total players available for the draft: {len(df_draft_pool):,}")
 except FileNotFoundError as e:
     print("Error: Could not find one or more database files!")
     print("Please check that your 'Data/' folder contains all 4 text files.")
