@@ -108,16 +108,78 @@ try:
 
     df_draft_pool['full_name'] = df_draft_pool['full_name'].replace('', np.nan).fillna('Legend ID-' + df_draft_pool['playerid'].astype(str))
     print("Success: Names mapped flawlessly!")
-    print("-----------------------------------------")
+    
+    print("Setting up Draft Engine position requirments")
 
-    print("TOP 5 ATTACKING TARGETS FOR THE CPU:")
-    top_attackers = df_draft_pool.sort_values(by='ATT_Score', ascending=False).head(5)
-    print(top_attackers[['playerid', 'full_name', 'overallrating', 'ATT_Score', 'MID_Score', 'DEF_Score']].to_string(index=False))
+    teams_list = [
+        {"teamid": 269, "name": "Brondby IF"},
+        {"teamid": 270, "name": "Silkeborg IF"},
+        {"teamid": 271, "name": "Aarhus GF"},
+        {"teamid": 272, "name": "Odense Boldklub"},
+        {"teamid": 819, "name": "FC Kobenhavn"},
+        {"teamid": 820, "name": "Aalborg BK"},
+        {"teamid": 822, "name": "Vejle BK"},
+        {"teamid": 1443, "name": "Viborg FF"},
+        {"teamid": 1447, "name": "Sonderjysk E"},
+        {"teamid": 1516, "name": "FC Midtjylland"},
+        {"teamid": 1786, "name": "Randers FC"},
+        {"teamid": 1788, "name": "FC Nordsjaelland"}
+    ]
 
-    print("TOP 5 DEFENSIVE TARGETS FOR THE CPU:")
-    top_defenders = df_draft_pool.sort_values(by='DEF_Score', ascending=False).head(5)
-    print(top_defenders[['playerid', 'full_name', 'overallrating', 'ATT_Score', 'MID_Score', 'DEF_Score']].to_string(index=False))
-    print("-----------------------------------------")
+    rosters = {t["teamid"]: [] for t in teams_list}
+
+    position_counts = {
+        t["teamid"]: {"GK": 0, "DEF": 0, "MID": 0, "ATT": 0}
+        for t in teams_list
+    }
+
+    def calculate_demand_multiplier(current_counts, position):
+        count = current_counts[position]
+
+        if position == "GK":
+            if count == 0: return 1.2
+            if count == 1: return 0.7
+            return 0.0
+        
+        elif position == "DEF":
+            if count < 4: return 1.0
+            if count < 6: return 0.6
+            return 0.0
+        
+        elif position == "MID":
+            if count < 4: return 1.0
+            if count < 7: return 0.6
+            return 0.0
+        
+        elif position == "ATT":
+            if count <3: return 1.1
+            if count <5: return 0.5
+            return 0.0
+        
+        return 1.0
+
+    print("Success: Draft positions setup and cpu logic initialised")
+
+    print("Mapping position integers to the 4 major position areas")
+
+    position_map = {
+        0: 'GK',
+        3:'DEF', 5:'DEF', 7:'DEF', 8:'DEF',
+        10: 'MID', 12: 'MID', 16: 'MID', 18:'MID',
+        14: 'ATT', 21: 'ATT', 25: 'ATT', 27:'ATT'
+    }
+
+    df_draft_pool['Position_Group'] = df_draft_pool['preferredposition1'].map(position_map).fillna('MID')
+
+    def assign_base_score(row):
+        if row['Position_Group'] == 'GK': return row['GK_Score']
+        if row['Position_Group'] == 'DEF': return row['DEF_Score']
+        if row['Position_Group'] == 'MID': return row['MID_Score']
+        return row['ATT_Score']
+    
+    df_draft_pool['Base_Archetype_Score'] = df_draft_pool.apply(assign_base_score, axis=1)
+
+    print("Success: Positions and base scores have been assigned!")
 except FileNotFoundError as e:
     print("Error: Could not find one or more database files!")
     print("Please check that your 'Data/' folder contains all 4 text files.")
