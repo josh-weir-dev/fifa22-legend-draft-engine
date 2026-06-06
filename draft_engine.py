@@ -1,5 +1,6 @@
 import pandas as pd
 import numpy as np
+import random
 
 print("Initialising FIFA 22 Legend Draft Engine...")
 print("-----------------------------------------")
@@ -178,6 +179,41 @@ try:
         return row['ATT_Score']
     
     df_draft_pool['Base_Archetype_Score'] = df_draft_pool.apply(assign_base_score, axis=1)
+
+    print("Starting the 20-Round Legend Draft")
+
+    random.shuffle(teams_list)
+
+    for index, team in enumerate(teams_list, start=1):
+        marker = "YOU" if team["teamid"] == 1788 else ""
+        print(f"Pick {index}: {team['name']}{marker}")
+
+    TOTAL_ROUNDS = 20
+    USER_TEAM_ID = 1788
+
+    draft_history = []
+
+    for round_num in range(1, TOTAL_ROUNDS + 1):
+        print(f"\n=========================================================")
+        print(f"ROUND {round_num} / {TOTAL_ROUNDS}")
+        print(f"=========================================================")
+
+        if round_num % 2 != 0:
+            current_round_order = teams_list.copy()
+            print("Draft Order: Forward")
+        else:
+            current_round_order = teams_list[::-1]
+            print("Draft Order: Reverse")
+        print("-------------------------------------")
+
+        for team in current_round_order:
+            t_id = team["teamid"]
+            t_name = team["name"]
+
+            available_players = df_draft_pool[~df_draft_pool['playerid'].isin(draft_history)].copy()
+
+            if available_players.empty:
+                print("No more players left in the pool to draft!")
 
     print("Success: Positions and base scores have been assigned!")
 except FileNotFoundError as e:
