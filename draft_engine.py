@@ -1,5 +1,6 @@
 import pandas as pd
 import numpy as np
+import random
 
 print("Initialising FIFA 22 Legend Draft Engine...")
 print("-----------------------------------------")
@@ -9,7 +10,7 @@ PLAYERS_PATH = "Data/players.txt"
 LINKS_PATH = "Data/teamplayerlinks.txt"
 TEAMS_PATH = "Data/teams.txt"
 EDITED_NAMES_PATH = "Data/editedplayernames.txt"
-DC_NAMES_PATH = "Data/dcplayernames.txt"
+DC_NAMES_PATH = "Data/playernames.txt"
 
 try:
     #Read values of files into Pandas DataFrames
@@ -17,7 +18,7 @@ try:
     df_links = pd.read_csv(LINKS_PATH, sep='\t', low_memory=False, encoding='utf-16')
     df_teams = pd.read_csv(TEAMS_PATH, sep='\t', low_memory=False, encoding='utf-16')
     df_edited_names = pd.read_csv(EDITED_NAMES_PATH, sep='\t', low_memory=False, encoding='utf-16')
-    df_name_dictionary = pd.read_csv(DC_NAMES_PATH, sep='\t',low_memory=False, encoding='utf-16')
+    df_name_dictionary = pd.read_csv(DC_NAMES_PATH, sep='\t',low_memory=False, encoding='utf-8')
 
     print("Success: All core database files loaded perfectly!")
     
@@ -84,29 +85,44 @@ try:
 
     print("Mapping player name IDs to strings ...")
 
-    df_dict_clean = df_name_dictionary[['nameid', 'name']].drop_duplicates(subset=['nameid'], keep='first')
-    name_lookup = df_dict_clean.set_index('nameid')['name']
+    if 'nameid' in df_name_dictionary.columns:
+        df_name_dictionary['nameid'] = pd.to_numeric(df_name_dictionary['nameid'], errors='coerce')
+    
+    df_dict_clean = df_name_dictionary[['nameid', 'name']].dropna().drop_duplicates(subset=['nameid'], keep='first')
+    
+    name_lookup = df_dict_clean.set_index(df_dict_clean['nameid'].astype('Int64'))['name']
 
-    df_draft_pool['first_name'] = df_draft_pool['firstnameid'].map(name_lookup).fillna('')
-    df_draft_pool['last_name'] = df_draft_pool['lastnameid'].map(name_lookup).fillna('')
+    pool_first_id = pd.to_numeric(df_draft_pool['firstnameid'], errors='coerce').astype('Int64')
+    pool_last_id = pd.to_numeric(df_draft_pool['lastnameid'], errors='coerce').astype('Int64')
+
+    df_draft_pool['first_name'] = pool_first_id.map(name_lookup).fillna('')
+    df_draft_pool['last_name'] = pool_last_id.map(name_lookup).fillna('')
 
     if 'playerid' in df_edited_names.columns:
         edited_cols = df_edited_names.columns
         fname_col = 'firstname'
         lname_col = 'surname'
+        cname_col = 'commonname'
 
         if fname_col and lname_col:
-            edited_lookup = df_edited_names[['playerid', fname_col, lname_col]].drop_duplicates(subset=['playerid'])
+            lookup_cols = ['playerid', fname_col, lname_col]
+            if cname_col in df_edited_names.columns:
+                lookup_cols.append(cname_col)
+
+            edited_lookup = df_edited_names[lookup_cols].drop_duplicates(subset=['playerid'])
             df_draft_pool = df_draft_pool.merge(edited_lookup, on='playerid', how='left')
 
-            df_draft_pool['first_name'] = df_draft_pool['first_name'].replace('', np.nan).fillna(df_draft_pool[fname_col]).fillna('')
-            df_draft_pool['last_name'] = df_draft_pool['last_name'].replace('', np.nan).fillna(df_draft_pool[lname_col]).fillna('')
-
-            df_draft_pool = df_draft_pool.drop(columns=[fname_col, lname_col], errors='ignore')
+            df_draft_pool['first_name'] = df_draft_pool[fname_col].fillna(df_draft_pool['first_name']).fillna('')
+            df_draft_pool['last_name'] = df_draft_pool[lname_col].fillna(df_draft_pool['last_name']).fillna('')
 
     df_draft_pool['full_name'] = (df_draft_pool['first_name'] + ' ' + df_draft_pool['last_name']).str.strip()
 
-    df_draft_pool['full_name'] = df_draft_pool['full_name'].replace('', np.nan).fillna('Legend ID-' + df_draft_pool['playerid'].astype(str))
+    if cname_col in df_draft_pool.columns:
+        df_draft_pool['commonname'] = df_draft_pool['commonname'].fillna('').astype(str).str.strip()
+        has_common_name = (df_draft_pool['commonname'] != '') & (df_draft_pool['commonname'] != 'nan')
+        df_draft_pool.loc[has_common_name, 'full_name'] = df_draft_pool.loc[has_common_name, 'commonname']
+        df_draft_pool = df_draft_pool.drop(columns=[cname_col], errors='ignore')
+    df_draft_pool = df_draft_pool.drop(columns=[fname_col, lname_col], errors='ignore')
     print("Success: Names mapped flawlessly!")
     
     print("Setting up Draft Engine position requirments")
@@ -133,28 +149,23 @@ try:
         for t in teams_list
     }
 
-    def calculate_demand_multiplier(current_counts, position):
+    def calculate_demand_multiplier(current_counts, position, starvation_mode):
         count = current_counts[position]
 
+        if starvation_mode:
+            return 1.0
+
         if position == "GK":
-            if count == 0: return 1.2
-            if count == 1: return 0.7
-            return 0.0
-        
+            return 1.0 if count < 2 else 0.0
+            
         elif position == "DEF":
-            if count < 4: return 1.0
-            if count < 6: return 0.6
-            return 0.0
-        
+            return 1.0 if count < 6 else 0.0
+            
         elif position == "MID":
-            if count < 4: return 1.0
-            if count < 7: return 0.6
-            return 0.0
-        
+            return 1.0 if count < 7 else 0.0
+            
         elif position == "ATT":
-            if count <3: return 1.1
-            if count <5: return 0.5
-            return 0.0
+            return 1.0 if count < 5 else 0.0
         
         return 1.0
 
@@ -165,8 +176,8 @@ try:
     position_map = {
         0: 'GK',
         3:'DEF', 5:'DEF', 7:'DEF', 8:'DEF',
-        10: 'MID', 12: 'MID', 16: 'MID', 18:'MID',
-        14: 'ATT', 21: 'ATT', 25: 'ATT', 27:'ATT'
+        10: 'MID', 12: 'MID', 16: 'MID', 18:'MID',14: 'MID', 
+        21: 'ATT', 23:'ATT', 25: 'ATT', 27:'ATT'
     }
 
     df_draft_pool['Position_Group'] = df_draft_pool['preferredposition1'].map(position_map).fillna('MID')
@@ -180,6 +191,188 @@ try:
     df_draft_pool['Base_Archetype_Score'] = df_draft_pool.apply(assign_base_score, axis=1)
 
     print("Success: Positions and base scores have been assigned!")
+
+    print("Starting the 20-Round Legend Draft")
+
+    random.shuffle(teams_list)
+
+    for index, team in enumerate(teams_list, start=1):
+        marker = "YOU" if team["teamid"] == 1788 else ""
+        print(f"Pick {index}: {team['name']}{marker}")
+
+    TOTAL_ROUNDS = 20
+    USER_TEAM_ID = 1788
+
+    draft_history = []
+
+    for round_num in range(1, TOTAL_ROUNDS + 1):
+        print(f"\n=========================================================")
+        print(f"ROUND {round_num} / {TOTAL_ROUNDS}")
+        print(f"=========================================================")
+
+        if round_num % 2 != 0:
+            current_round_order = teams_list.copy()
+            print("Draft Order: Forward")
+        else:
+            current_round_order = teams_list[::-1]
+            print("Draft Order: Reverse")
+        print("-------------------------------------")
+
+        for team in current_round_order:
+            t_id = team["teamid"]
+            t_name = team["name"]
+
+            available_players = df_draft_pool[~df_draft_pool['playerid'].isin(draft_history)].copy()
+
+            if available_players.empty:
+                print("No more players left in the pool to draft!")
+                break
+
+            starvation_mode = False
+
+            all_required_positions = set()
+            for team_check in teams_list:
+                tc_id = team_check["teamid"]
+                if position_counts[tc_id]['GK'] < 2: all_required_positions.add('GK')
+                if position_counts[tc_id]['DEF'] < 6: all_required_positions.add('DEF')
+                if position_counts[tc_id]['MID'] < 7: all_required_positions.add('MID')
+                if position_counts[tc_id]['ATT'] < 5: all_required_positions.add('ATT')
+
+            for req_pos in all_required_positions:
+                if available_players[available_players['Position_Group'] == req_pos].empty:
+                    is_starvation_mode = True
+                    break
+
+            def calculate_draft_priority(row):
+                pos = row['Position_Group']
+                base_score = row['Base_Archetype_Score']
+                current_counts = position_counts[t_id]
+                multiplier = calculate_demand_multiplier(current_counts, pos, starvation_mode)
+                return base_score * multiplier
+            
+            available_players['Draft_Priority'] = available_players.apply(calculate_draft_priority, axis=1)
+
+            if t_id == USER_TEAM_ID:
+                print(f"Your Turn! [ {t_name.upper()} ]")
+                print("Your Current Roster Breakdown: ")
+                print(f"GKs: {position_counts[t_id]['GK']}/2 | DEFs: {position_counts[t_id]['DEF']}/6 | MIDs: {position_counts[t_id]['MID']}/7 | ATTs: {position_counts[t_id]['ATT']}/5\n")
+
+                if starvation_mode:
+                    print("⚠️ POOL SCARCITY ALERT: Position limits have been dynamically lifted to finish the draft! ⚠️\n")
+
+                print("Top Available Talents For Your Board:")
+                for p_grp in ['GK', 'DEF', 'MID', 'ATT']:
+                    sub_pool = available_players[available_players['Position_Group'] == p_grp]
+                    
+                    if sub_pool.empty:
+                        print(f"{p_grp} Options: [No players remaining in global pool]")
+                        continue
+
+                    other_positions_extinct = all(
+                        available_players[available_players['Position_Group'] == other].empty 
+                        for other in ['GK', 'DEF', 'MID', 'ATT'] if other != p_grp
+                    )
+
+                    if calculate_demand_multiplier(position_counts[t_id], p_grp, starvation_mode=False) == 0 and not other_positions_extinct:
+                        print(f"{p_grp}: [Position Is Full]")
+                        continue
+
+                    top_options = sub_pool.sort_values(by='Base_Archetype_Score', ascending=False).head(5)
+                    print(f"{p_grp} Options:")
+                    for _, row in top_options.iterrows():
+                        opt_name = str(row['full_name'].iloc[0]) if isinstance(row['full_name'], pd.Series) else str(row['full_name'])
+                        opt_rating = int(row['overallrating'].iloc[0]) if isinstance(row['overallrating'], pd.Series) else int(row['overallrating'])
+                        opt_score = float(row['Base_Archetype_Score'].iloc[0]) if isinstance(row['Base_Archetype_Score'], pd.Series) else float(row['Base_Archetype_Score'])
+                        
+                        print(f"• {opt_name:<30} (OVR: {opt_rating} | Score: {opt_score:.1f})")
+                
+                while True:
+                    search_query = input("Enter the name of the player you want to draft: ").strip()
+
+                    if len(search_query) < 2:
+                        print("Please type at least 2 characters to search for a player")
+                        continue
+
+                    matches = available_players[available_players['full_name'].str.contains(search_query, case=False, na=False)]
+
+                    if matches.empty:
+                        print(f"No available players found matching '{search_query}'")
+                        continue
+
+                    if len(matches) > 1:
+                        print(f"Found {len(matches)} players matching '{search_query}':")
+                        matches_list = matches.sort_values(by='Base_Archetype_Score', ascending=False).reset_index(drop=True)
+
+                        for idx, row in matches_list.iterrows():
+                            print(f"[{idx + 1}] {row['full_name']:<30} ({row['Position_Group']} | OVR: {row['overallrating']})")
+                        print("[0] Cancel search and re-type name")
+
+                        try:
+                            chocice_idx=int(input("Type the line number of the player you want: ").strip())
+                            if chocice_idx == 0:
+                                continue
+                            if chocice_idx <1 or chocice_idx > len (matches_list):
+                                print("Invalid choice number")
+                                continue
+                            selected_player = matches_list.iloc[chocice_idx-1]
+                        except ValueError:
+                            print("Invalid entry. Please enter a valid menu number")
+                            continue
+                    
+                    else:
+                        selected_player = matches.iloc[0]
+                    
+                    chosen_id = selected_player['playerid']
+                    p_pos = selected_player['Position_Group']
+
+                    needed_positions = [pos for pos in['GK', 'DEF', 'MID', 'ATT']if position_counts[t_id][pos]<{'GK':2, 'DEF':6, 'MID':7, 'ATT':5}[pos]]
+                    extinct_needed = all(available_players[available_players['Position_Group'] == pos].empty for pos in needed_positions)
+
+                    if calculate_demand_multiplier(position_counts[t_id], p_pos, starvation_mode) == 0 and not extinct_needed:
+                        print(f"Selection rejected: You cannot draft {selected_player['full_name']}. Your {p_pos} area is full")
+                        continue
+
+                    break
+            else:
+                available_players = available_players.sort_values(
+                    by=['Draft_Priority', 'overallrating', 'playerid'], 
+                    ascending=[False, False, True]
+                )
+                top_choice = available_players.iloc[0]
+                top_pos = top_choice['Position_Group']
+                global_pool_for_pos = available_players[available_players['Position_Group'] == top_pos]
+
+                if not global_pool_for_pos.empty and top_choice['Draft_Priority'] > 0:
+                    selected_player = top_choice
+                else:
+                    selected_player = available_players.sort_values(by='overallrating', ascending=False)
+            
+            raw_pos = selected_player['Position_Group']
+            raw_id = selected_player['playerid']
+            raw_name = selected_player['full_name']
+            raw_rating = selected_player['overallrating']
+
+            chosen_id = int(raw_id.iloc[0]) if isinstance(raw_id, pd.Series) else int(raw_id)
+            p_pos = str(raw_pos.iloc[0]) if isinstance(raw_pos, pd.Series) else str(raw_pos)
+            p_name = str(raw_name.iloc[0]) if isinstance(raw_name, pd.Series) else str(raw_name)
+            p_rating = int(raw_rating.iloc[0]) if isinstance(raw_rating, pd.Series) else int(raw_rating)
+
+            draft_history.append(chosen_id)
+
+            rosters[t_id].append({
+                "playerid": chosen_id,
+                "name": p_name,
+                "position": p_pos,
+                "rating": p_rating
+            })
+
+            position_counts[t_id][p_pos] += 1
+
+            if t_id == USER_TEAM_ID:
+                print(f"SUCCESS! You drafted {p_name} ({p_pos} | OVR: {p_rating})\n")
+            else:
+                print(f"{t_name:<30} selects  {p_name:<30} ({p_pos:<3} | OVR: {p_rating})")
+    print("The draft has officially concluded")
 except FileNotFoundError as e:
     print("Error: Could not find one or more database files!")
     print("Please check that your 'Data/' folder contains all 4 text files.")
