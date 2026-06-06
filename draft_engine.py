@@ -214,7 +214,80 @@ try:
 
             if available_players.empty:
                 print("No more players left in the pool to draft!")
+                break
 
+            def calculate_draft_priority(row):
+                pos = row['Position_Group']
+                base_score = row['Base_Archetype_Score']
+                current_counts = position_counts[t_id]
+                multiplier = calculate_demand_multiplier(current_counts, pos)
+                return base_score * multiplier
+            
+            available_players['Draft_Priority'] = available_players.apply(calculate_draft_priority, axis=1)
+
+            if t_id == USER_TEAM_ID:
+                print(f"Your Turn! [ {t_name.upper()} ]")
+                print("Your Current Roster Breakdown: ")
+                print(f"GKs: {position_counts[t_id]['GK']}/2 | DEFs: {position_counts[t_id]['DEF']}/6 | MIDs: {position_counts[t_id]['MID']}/7 | ATTs: {position_counts[t_id]['ATT']}/5\n")
+
+                print("Top Available Talents For Your Board:")
+                for p_grp in ['GK', 'DEF', 'MID', 'ATT']:
+                    sub_pool = available_players[available_players['Position_Group'] == p_grp]
+                    if calculate_demand_multiplier(position_counts[t_id], p_grp) == 0:
+                        print(f"{p_grp}: [Position Is Full]")
+                        continue
+
+                    top_options = sub_pool.sort_values(by='Base_Archetype_Score', ascending=False).head(5)
+                    print(f"{p_grp} Options:")
+                    for _, row in top_options.iterrows():
+                        print(f"• {row['full_name']:<30} (OVR: {row['overallrating']} | Score: {row['Base_Archetype_Score']})")
+                
+                while True:
+                    search_query = input("Enter the name of the player you want to draft: ").strip()
+
+                    if len(search_query) < 2:
+                        print("Please type at least 2 characters to search for a player")
+                        continue
+
+                    matches = available_players[available_players['full_name'].str.contains(search_query, case=False, na=False)]
+
+                    if matches.empty:
+                        print(f"No available players found matching '{search_query}'")
+                        continue
+
+                    if len(matches) > 1:
+                        print(f"Found {len(matches)} players matching '{search_query}':")
+                        matches_list = matches.sort_values(by='Base_Archetype_Score', ascending=False).reset_index(drop=True)
+
+                        for idx, row in matches_list.iterrows():
+                            print(f"[{idx + 1}] {row['full_name']:<30} ({row['Position_Group']} | OVR: {row['overallrating']})")
+                        print("[0] Cancel search and re-type name")
+
+                        try:
+                            chocice_idx=int(input("Type the line number of the player you want: ").strip())
+                            if chocice_idx == 0:
+                                continue
+                            if chocice_idx <1 or chocice_idx > len (matches_list):
+                                print("Invalid choice number")
+                                continue
+                            selected_player = matches_list.iloc[chocice_idx-1]
+                        except ValueError:
+                            print("Invalid entry. Please enter a valid menu number")
+                            continue
+                    
+                    else:
+                        selected_player = matches.iloc[0]
+                    
+                    chosen_id = selected_player['playerid']
+                    p_pos = selected_player['Position_Group']
+
+                    if calculate_demand_multiplier(position_counts[t_id], p_pos) == 0:
+                        print(f"Selection rejected: You cannot draft {selected_player['full_name']}. Your {p_pos} area is full")
+                        continue
+
+                    break
+            else:
+                
     print("Success: Positions and base scores have been assigned!")
 except FileNotFoundError as e:
     print("Error: Could not find one or more database files!")
