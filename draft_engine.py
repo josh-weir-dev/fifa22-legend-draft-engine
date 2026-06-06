@@ -10,7 +10,7 @@ PLAYERS_PATH = "Data/players.txt"
 LINKS_PATH = "Data/teamplayerlinks.txt"
 TEAMS_PATH = "Data/teams.txt"
 EDITED_NAMES_PATH = "Data/editedplayernames.txt"
-DC_NAMES_PATH = "Data/dcplayernames.txt"
+DC_NAMES_PATH = "Data/playernames.txt"
 
 try:
     #Read values of files into Pandas DataFrames
@@ -18,7 +18,7 @@ try:
     df_links = pd.read_csv(LINKS_PATH, sep='\t', low_memory=False, encoding='utf-16')
     df_teams = pd.read_csv(TEAMS_PATH, sep='\t', low_memory=False, encoding='utf-16')
     df_edited_names = pd.read_csv(EDITED_NAMES_PATH, sep='\t', low_memory=False, encoding='utf-16')
-    df_name_dictionary = pd.read_csv(DC_NAMES_PATH, sep='\t',low_memory=False, encoding='utf-16')
+    df_name_dictionary = pd.read_csv(DC_NAMES_PATH, sep='\t',low_memory=False, encoding='utf-8')
 
     print("Success: All core database files loaded perfectly!")
     
@@ -102,19 +102,27 @@ try:
         edited_cols = df_edited_names.columns
         fname_col = 'firstname'
         lname_col = 'surname'
+        cname_col = 'commonname'
 
         if fname_col and lname_col:
-            edited_lookup = df_edited_names[['playerid', fname_col, lname_col]].drop_duplicates(subset=['playerid'])
+            lookup_cols = ['playerid', fname_col, lname_col]
+            if cname_col in df_edited_names.columns:
+                lookup_cols.append(cname_col)
+
+            edited_lookup = df_edited_names[lookup_cols].drop_duplicates(subset=['playerid'])
             df_draft_pool = df_draft_pool.merge(edited_lookup, on='playerid', how='left')
 
-            df_draft_pool['first_name'] = df_draft_pool['first_name'].replace('', np.nan).fillna(df_draft_pool[fname_col]).fillna('')
-            df_draft_pool['last_name'] = df_draft_pool['last_name'].replace('', np.nan).fillna(df_draft_pool[lname_col]).fillna('')
-
-            df_draft_pool = df_draft_pool.drop(columns=[fname_col, lname_col], errors='ignore')
+            df_draft_pool['first_name'] = df_draft_pool[fname_col].fillna(df_draft_pool['first_name']).fillna('')
+            df_draft_pool['last_name'] = df_draft_pool[lname_col].fillna(df_draft_pool['last_name']).fillna('')
 
     df_draft_pool['full_name'] = (df_draft_pool['first_name'] + ' ' + df_draft_pool['last_name']).str.strip()
 
-    df_draft_pool['full_name'] = df_draft_pool['full_name'].replace('', np.nan).fillna('Legend ID-' + df_draft_pool['playerid'].astype(str))
+    if cname_col in df_draft_pool.columns:
+        df_draft_pool['commonname'] = df_draft_pool['commonname'].fillna('').astype(str).str.strip()
+        has_common_name = (df_draft_pool['commonname'] != '') & (df_draft_pool['commonname'] != 'nan')
+        df_draft_pool.loc[has_common_name, 'full_name'] = df_draft_pool.loc[has_common_name, 'commonname']
+        df_draft_pool = df_draft_pool.drop(columns=[cname_col], errors='ignore')
+    df_draft_pool = df_draft_pool.drop(columns=[fname_col, lname_col], errors='ignore')
     print("Success: Names mapped flawlessly!")
     
     print("Setting up Draft Engine position requirments")
