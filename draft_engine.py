@@ -90,14 +90,11 @@ try:
     
     df_dict_clean = df_name_dictionary[['nameid', 'name']].dropna().drop_duplicates(subset=['nameid'], keep='first')
     
-    # Force the lookup index to be standard Int64 so float decimals don't break it
     name_lookup = df_dict_clean.set_index(df_dict_clean['nameid'].astype('Int64'))['name']
 
-    # 🔧 FIX 2: Ensure the draft pool IDs are also cast to Int64 before mapping
     pool_first_id = pd.to_numeric(df_draft_pool['firstnameid'], errors='coerce').astype('Int64')
     pool_last_id = pd.to_numeric(df_draft_pool['lastnameid'], errors='coerce').astype('Int64')
 
-    # Execute the mapping with matching data types
     df_draft_pool['first_name'] = pool_first_id.map(name_lookup).fillna('')
     df_draft_pool['last_name'] = pool_last_id.map(name_lookup).fillna('')
 
@@ -144,8 +141,11 @@ try:
         for t in teams_list
     }
 
-    def calculate_demand_multiplier(current_counts, position):
+    def calculate_demand_multiplier(current_counts, position, starvation_mode):
         count = current_counts[position]
+
+        if starvation_mode:
+            return 1.0
 
         if position == "GK":
             return 1.0 if count < 2 else 0.0
@@ -220,11 +220,26 @@ try:
                 print("No more players left in the pool to draft!")
                 break
 
+            starvation_mode = False
+
+            all_required_positions = set()
+            for team_check in teams_list:
+                tc_id = team_check["teamid"]
+                if position_counts[tc_id]['GK'] < 2: all_required_positions.add('GK')
+                if position_counts[tc_id]['DEF'] < 6: all_required_positions.add('DEF')
+                if position_counts[tc_id]['MID'] < 7: all_required_positions.add('MID')
+                if position_counts[tc_id]['ATT'] < 5: all_required_positions.add('ATT')
+
+            for req_pos in all_required_positions:
+                if available_players[available_players['Position_Group'] == req_pos].empty:
+                    is_starvation_mode = True
+                    break
+
             def calculate_draft_priority(row):
                 pos = row['Position_Group']
                 base_score = row['Base_Archetype_Score']
                 current_counts = position_counts[t_id]
-                multiplier = calculate_demand_multiplier(current_counts, pos)
+                multiplier = calculate_demand_multiplier(current_counts, pos, starvation_mode)
                 return base_score * multiplier
             
             available_players['Draft_Priority'] = available_players.apply(calculate_draft_priority, axis=1)
@@ -234,17 +249,34 @@ try:
                 print("Your Current Roster Breakdown: ")
                 print(f"GKs: {position_counts[t_id]['GK']}/2 | DEFs: {position_counts[t_id]['DEF']}/6 | MIDs: {position_counts[t_id]['MID']}/7 | ATTs: {position_counts[t_id]['ATT']}/5\n")
 
+                if starvation_mode:
+                    print("⚠️ POOL SCARCITY ALERT: Position limits have been dynamically lifted to finish the draft! ⚠️\n")
+
                 print("Top Available Talents For Your Board:")
                 for p_grp in ['GK', 'DEF', 'MID', 'ATT']:
                     sub_pool = available_players[available_players['Position_Group'] == p_grp]
-                    if calculate_demand_multiplier(position_counts[t_id], p_grp) == 0:
+                    
+                    if sub_pool.empty:
+                        print(f"{p_grp} Options: [No players remaining in global pool]")
+                        continue
+
+                    other_positions_extinct = all(
+                        available_players[available_players['Position_Group'] == other].empty 
+                        for other in ['GK', 'DEF', 'MID', 'ATT'] if other != p_grp
+                    )
+
+                    if calculate_demand_multiplier(position_counts[t_id], p_grp, starvation_mode=False) == 0 and not other_positions_extinct:
                         print(f"{p_grp}: [Position Is Full]")
                         continue
 
                     top_options = sub_pool.sort_values(by='Base_Archetype_Score', ascending=False).head(5)
                     print(f"{p_grp} Options:")
                     for _, row in top_options.iterrows():
-                        print(f"• {row['full_name']:<30} (OVR: {row['overallrating']} | Score: {row['Base_Archetype_Score']})")
+                        opt_name = str(row['full_name'].iloc[0]) if isinstance(row['full_name'], pd.Series) else str(row['full_name'])
+                        opt_rating = int(row['overallrating'].iloc[0]) if isinstance(row['overallrating'], pd.Series) else int(row['overallrating'])
+                        opt_score = float(row['Base_Archetype_Score'].iloc[0]) if isinstance(row['Base_Archetype_Score'], pd.Series) else float(row['Base_Archetype_Score'])
+                        
+                        print(f"• {opt_name:<30} (OVR: {opt_rating} | Score: {opt_score:.1f})")
                 
                 while True:
                     search_query = input("Enter the name of the player you want to draft: ").strip()
@@ -285,19 +317,37 @@ try:
                     chosen_id = selected_player['playerid']
                     p_pos = selected_player['Position_Group']
 
-                    if calculate_demand_multiplier(position_counts[t_id], p_pos) == 0:
+                    needed_positions = [pos for pos in['GK', 'DEF', 'MID', 'ATT']if position_counts[t_id][pos]<{'GK':2, 'DEF':6, 'MID':7, 'ATT':5}[pos]]
+                    extinct_needed = all(available_players[available_players['Position_Group'] == pos].empty for pos in needed_positions)
+
+                    if calculate_demand_multiplier(position_counts[t_id], p_pos, starvation_mode) == 0 and not extinct_needed:
                         print(f"Selection rejected: You cannot draft {selected_player['full_name']}. Your {p_pos} area is full")
                         continue
 
                     break
             else:
-                available_players = available_players.sort_values(by='Draft_Priority', ascending=False)
-                selected_player = available_players.iloc[0]
-                chosen_id = selected_player['playerid']
-                p_pos = selected_player['Position_Group']
+                available_players = available_players.sort_values(
+                    by=['Draft_Priority', 'overallrating', 'playerid'], 
+                    ascending=[False, False, True]
+                )
+                top_choice = available_players.iloc[0]
+                top_pos = top_choice['Position_Group']
+                global_pool_for_pos = available_players[available_players['Position_Group'] == top_pos]
+
+                if not global_pool_for_pos.empty and top_choice['Draft_Priority'] > 0:
+                    selected_player = top_choice
+                else:
+                    selected_player = available_players.sort_values(by='overallrating', ascending=False)
             
-            p_name = selected_player['full_name']
-            p_rating = selected_player['overallrating']
+            raw_pos = selected_player['Position_Group']
+            raw_id = selected_player['playerid']
+            raw_name = selected_player['full_name']
+            raw_rating = selected_player['overallrating']
+
+            chosen_id = int(raw_id.iloc[0]) if isinstance(raw_id, pd.Series) else int(raw_id)
+            p_pos = str(raw_pos.iloc[0]) if isinstance(raw_pos, pd.Series) else str(raw_pos)
+            p_name = str(raw_name.iloc[0]) if isinstance(raw_name, pd.Series) else str(raw_name)
+            p_rating = int(raw_rating.iloc[0]) if isinstance(raw_rating, pd.Series) else int(raw_rating)
 
             draft_history.append(chosen_id)
 
