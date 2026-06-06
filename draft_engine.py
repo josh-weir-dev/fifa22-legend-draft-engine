@@ -85,11 +85,21 @@ try:
 
     print("Mapping player name IDs to strings ...")
 
-    df_dict_clean = df_name_dictionary[['nameid', 'name']].drop_duplicates(subset=['nameid'], keep='first')
-    name_lookup = df_dict_clean.set_index('nameid')['name']
+    if 'nameid' in df_name_dictionary.columns:
+        df_name_dictionary['nameid'] = pd.to_numeric(df_name_dictionary['nameid'], errors='coerce')
+    
+    df_dict_clean = df_name_dictionary[['nameid', 'name']].dropna().drop_duplicates(subset=['nameid'], keep='first')
+    
+    # Force the lookup index to be standard Int64 so float decimals don't break it
+    name_lookup = df_dict_clean.set_index(df_dict_clean['nameid'].astype('Int64'))['name']
 
-    df_draft_pool['first_name'] = df_draft_pool['firstnameid'].map(name_lookup).fillna('')
-    df_draft_pool['last_name'] = df_draft_pool['lastnameid'].map(name_lookup).fillna('')
+    # 🔧 FIX 2: Ensure the draft pool IDs are also cast to Int64 before mapping
+    pool_first_id = pd.to_numeric(df_draft_pool['firstnameid'], errors='coerce').astype('Int64')
+    pool_last_id = pd.to_numeric(df_draft_pool['lastnameid'], errors='coerce').astype('Int64')
+
+    # Execute the mapping with matching data types
+    df_draft_pool['first_name'] = pool_first_id.map(name_lookup).fillna('')
+    df_draft_pool['last_name'] = pool_last_id.map(name_lookup).fillna('')
 
     if 'playerid' in df_edited_names.columns:
         edited_cols = df_edited_names.columns
@@ -158,8 +168,8 @@ try:
     position_map = {
         0: 'GK',
         3:'DEF', 5:'DEF', 7:'DEF', 8:'DEF',
-        10: 'MID', 12: 'MID', 16: 'MID', 18:'MID',
-        14: 'ATT', 21: 'ATT', 25: 'ATT', 27:'ATT'
+        10: 'MID', 12: 'MID', 16: 'MID', 18:'MID',14: 'MID', 
+        21: 'ATT', 23:'ATT', 25: 'ATT', 27:'ATT'
     }
 
     df_draft_pool['Position_Group'] = df_draft_pool['preferredposition1'].map(position_map).fillna('MID')
