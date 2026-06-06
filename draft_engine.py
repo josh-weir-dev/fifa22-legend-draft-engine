@@ -138,24 +138,16 @@ try:
         count = current_counts[position]
 
         if position == "GK":
-            if count == 0: return 1.2
-            if count == 1: return 0.7
-            return 0.0
-        
+            return 1.0 if count < 2 else 0.0
+            
         elif position == "DEF":
-            if count < 4: return 1.0
-            if count < 6: return 0.6
-            return 0.0
-        
+            return 1.0 if count < 6 else 0.0
+            
         elif position == "MID":
-            if count < 4: return 1.0
-            if count < 7: return 0.6
-            return 0.0
-        
+            return 1.0 if count < 7 else 0.0
+            
         elif position == "ATT":
-            if count <3: return 1.1
-            if count <5: return 0.5
-            return 0.0
+            return 1.0 if count < 5 else 0.0
         
         return 1.0
 
@@ -179,6 +171,8 @@ try:
         return row['ATT_Score']
     
     df_draft_pool['Base_Archetype_Score'] = df_draft_pool.apply(assign_base_score, axis=1)
+
+    print("Success: Positions and base scores have been assigned!")
 
     print("Starting the 20-Round Legend Draft")
 
@@ -287,8 +281,30 @@ try:
 
                     break
             else:
-                
-    print("Success: Positions and base scores have been assigned!")
+                available_players = available_players.sort_values(by='Draft_Priority', ascending=False)
+                selected_player = available_players.iloc[0]
+                chosen_id = selected_player['playerid']
+                p_pos = selected_player['Position_Group']
+            
+            p_name = selected_player['full_name']
+            p_rating = selected_player['overallrating']
+
+            draft_history.append(chosen_id)
+
+            rosters[t_id].append({
+                "playerid": chosen_id,
+                "name": p_name,
+                "position": p_pos,
+                "rating": p_rating
+            })
+
+            position_counts[t_id][p_pos] += 1
+
+            if t_id == USER_TEAM_ID:
+                print(f"SUCCESS! You drafted {p_name} ({p_pos} | OVR: {p_rating})\n")
+            else:
+                print(f"{t_name:<30} selects  {p_name:<30} ({p_pos:<3} | OVR: {p_rating})")
+    print("The draft has officially concluded")
 except FileNotFoundError as e:
     print("Error: Could not find one or more database files!")
     print("Please check that your 'Data/' folder contains all 4 text files.")
